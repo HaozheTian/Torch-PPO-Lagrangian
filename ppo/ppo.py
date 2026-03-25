@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import gymnasium as gym
 from torch.nn.functional import softplus
-from torch.optim import Adam
+from torch.optim import Adam, SGD
 from datetime import datetime
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
@@ -185,7 +185,9 @@ class PPOLag(PPO):
     def update_policy(self, data: PPOLagBufferItem):
         # update penalty parameter
         cur_cost = self.logger.mean('eps_costs')
-        loss_penalty = -self.penalty_param*(cur_cost - self.cost_limit)
+
+        p = softplus(self.penalty_param)
+        loss_penalty = -p*(cur_cost - self.cost_limit)
         self.penalty_optimizer.zero_grad()
         loss_penalty.backward()
         self.penalty_optimizer.step()
@@ -193,7 +195,7 @@ class PPOLag(PPO):
         adv = data.advantages
         adv = (adv - adv.mean()) / (adv.std() + 1e-10)
         adv_cost = data.advantages_cost
-        adv_cost = (adv_cost - adv_cost.mean()) / (adv_cost.std() + 1e-10)
+        adv_cost = adv_cost / (adv_cost.std() + 1e-10)
         for _ in range(self.num_updates):
             log_probs = self.policy(data.observations, data.actions).squeeze()
             ratio = torch.exp(log_probs - data.log_probs)
@@ -225,7 +227,7 @@ class PPOLag(PPO):
 
     def _init_hyperparameters(self, **kwargs):
         super()._init_hyperparameters(**kwargs)
-        self.penalty_lr = kwargs.get('penalty_lr', 5e-2)
+        self.penalty_lr = kwargs.get('penalty_lr', 5e-4)
         self.cost_limit = kwargs.get('cost_limit', 100)
 
     def _init_networks(self):
@@ -234,4 +236,4 @@ class PPOLag(PPO):
         self.penalty_param = torch.tensor(1.0, requires_grad=True, dtype=torch.float32, device=self.device)
         
         self.value_cost_optimizer = Adam(self.value_cost.parameters(),lr=self.value_lr)
-        self.penalty_optimizer = Adam([self.penalty_param], lr=self.penalty_lr)
+        self.penalty_optimizer = SGD([self.penalty_param], lr=self.penalty_lr)
